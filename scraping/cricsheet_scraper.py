@@ -2,84 +2,81 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 import os
 import requests
 import time
+import zipfile
 
-# Create the folder to store downloaded JSONs
-DOWNLOAD_FOLDER = "data/json"
+# Set up folders
+DOWNLOAD_FOLDER = "data/zips"
+EXTRACT_FOLDER = "data/json"
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
+os.makedirs(EXTRACT_FOLDER, exist_ok=True)
 
-# Setup Chrome options
+# Set up headless Chrome
 options = Options()
-options.add_argument('--headless')  # Run in headless mode (invisible browser)
+options.add_argument('--headless')
 options.add_argument('--disable-gpu')
 options.add_argument('--no-sandbox')
 
 # Launch browser
 driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-wait = WebDriverWait(driver, 10)
 
 try:
-    # Step 1: Go to Cricsheet match list page
+    # Open Cricsheet matches page
     driver.get("https://cricsheet.org/matches/")
     time.sleep(2)
 
-    print(" Searching for match links...")
-    # Scroll down to load the table
-    # Scroll to load full table
-    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-    time.sleep(3)
+    print("Page loaded. Looking for required match formats...")
 
-#  FIXED SELECTOR
-    wait.until(EC.presence_of_element_located((By.XPATH, '//table//a[contains(@href, "/matches/")]')))
+    # Find all <dt> elements (match types)
+    dt_elements = driver.find_elements(By.XPATH, '//dl/dt')
 
-# Extract match links
-    match_links = driver.find_elements(By.XPATH, '//table//a[contains(@href, "/matches/")]')
+    download_count = 0
 
-    print(f"🔗 Found {len(match_links)} match pages...")
+    for dt in dt_elements:
+        match_type = dt.text.strip()
 
-
-    downloaded_count = 0
-
-    # Step 3: Loop through each match page
-    for url in match_urls[:10]:  # Limit to first 10 for demo/testing
-        try:
-            driver.get(url)
-            time.sleep(2)
-
-            # Step 4: Locate the JSON download link using dynamic XPath
-            json_link_element = driver.find_element(
-                By.XPATH,
-                '//a[contains(@href, "/downloads/json/") and contains(@href, ".json")]'
-            )
+       
+        if (
+            "t20" in match_type.lower() or 
+            match_type in ['Test matches', 'One-day internationals', 'Indian Premier League']
+        ):
+            print(f"✅ Found: {match_type}")
+            
+            # Get the next sibling <dd>
+            dd_element = dt.find_element(By.XPATH, 'following-sibling::dd[1]')
+            
+            # Find the JSON ZIP link
+            json_link_element = dd_element.find_element(By.XPATH, './/a[contains(@href, "_json.zip")]')
             json_url = json_link_element.get_attribute("href")
+            file_name = json_url.split("/")[-1]
+            file_path = os.path.join(DOWNLOAD_FOLDER, file_name)
 
-            # Add base URL if it's a relative link
-            if json_url.startswith("/"):
-                json_url = "https://cricsheet.org" + json_url
-
-            # Step 5: Download and save the JSON file
-            match_id = url.split("/")[-1].replace(".html", "")
-            file_path = os.path.join(DOWNLOAD_FOLDER, f"{match_id}.json")
-
+            #Download the ZIP file
+            print(f"Downloading {file_name}...")
             response = requests.get(json_url)
             if response.status_code == 200:
                 with open(file_path, "wb") as f:
                     f.write(response.content)
-                print(f" Downloaded: {match_id}.json")
-                downloaded_count += 1
+                print(f"Saved: {file_path}")
+
+                #UNZIP the file
+                with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                    zip_ref.extractall(EXTRACT_FOLDER)
+                print(f"Extracted JSONs to: {EXTRACT_FOLDER}")
+
+                #DELETE the ZIP file
+                os.remove(file_path)
+                print(f"Deleted ZIP: {file_path}")
+
+                download_count += 1
             else:
-                print(f" Failed to download JSON for: {match_id}")
+                print(f"Failed to download {file_name} (status {response.status_code})")
 
-        except Exception as e:
-            print(f" Skipped {url}: {str(e)}")
-
-    print(f"\n Download complete. Total files downloaded: {downloaded_count}")
+    print(f"\n-----Downloaded and extracted {download_count} JSON ZIP files.")
 
 finally:
     driver.quit()
-    print("🧹 WebDriver closed.")
+    print("WebDriver closed.")
